@@ -35,12 +35,6 @@ Berikut adalah alur komunikasi antar service menggunakan Kafka dan API request:
 
 ---
 
-## Struktur Project
-
-Setiap service memiliki struktur folder yang mengikuti prinsip Clean Architecture untuk pemisahan domain, usecase, repository, dan delivery layer.
-
----
-
 ## Cara Build & Jalankan
 
 1. Build semua service dan dependency dengan docker compose:
