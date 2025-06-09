@@ -19,7 +19,7 @@ Terdapat 5 service utama dengan port sebagai berikut:
 
 Berikut adalah alur komunikasi antar service menggunakan Kafka dan API request:
 
-![Workflow API](./modif.png)
+![Workflow API](./penjelasan.png)
 
 ---
 
