@@ -12,15 +12,10 @@ import (
 	"service_user/internal/repository"
 	"service_user/internal/usecase"
 
-	"github.com/joho/godotenv"
 	"github.com/segmentio/kafka-go"
 )
 
 func main() {
-
-	if err := godotenv.Load(); err != nil {
-		log.Fatalf("env : %v", err)
-	}
 
 	db, err := database.ConnectDB()
 	if err != nil {

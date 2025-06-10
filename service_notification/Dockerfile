@@ -1,22 +1,31 @@
-# Gunakan base image Golang
-FROM golang:1.24-alpine
+# Stage 1: Build binary
+FROM golang:1.24-alpine AS builder
 
-# Set working directory di dalam container
+RUN apk add --no-cache bash
+
 WORKDIR /app
 
-# Copy semua file ke working dir container
-COPY . .
-
-# Unduh dependencies
+# Copy go mod dan sum (cache friendly)
+COPY go.mod go.sum ./
 ENV GOPROXY=https://proxy.golang.org,direct
 RUN go mod download
 
+# Copy semua source code
+COPY . .
 
-# Build binary app
-RUN go build -o main ./cmd/main.go
+# Build binary
+RUN go build -ldflags="-s -w" -o main ./cmd/main.go
 
-# Expose port jika ada HTTP server
-EXPOSE 3004
+# Stage 2: Clean final image
+FROM alpine:latest
 
-# Jalankan aplikasi
-CMD ["./main"]
+# Install bash kalau tetap pakai CMD shell
+RUN apk add --no-cache bash
+
+WORKDIR /app
+
+# Copy hanya hasil build
+COPY --from=builder /app/main .
+
+
+CMD ["sh", "-c", "./main"]

@@ -1,25 +1,34 @@
-FROM golang:1.24-alpine
+# Stage 1: Build binary
+FROM golang:1.24-alpine AS builder
 
-# Install bash (git tidak diperlukan)
 RUN apk add --no-cache bash
 
-# Set working directory
 WORKDIR /app
 
-# Copy dan download dependency terlebih dahulu (layer cache lebih efisien)
+# Copy go mod dan sum (cache friendly)
 COPY go.mod go.sum ./
 ENV GOPROXY=https://proxy.golang.org,direct
 RUN go mod download
 
-# Copy seluruh source code
+# Copy semua source code
 COPY . .
 
-# Build binary untuk migrate dan main
-RUN go build  -o migrate ./cmd/migrate/main.go
-RUN go build  -o main ./cmd/main.go
+# Build binary
+RUN go build -ldflags="-s -w" -o migrate ./cmd/migrate/main.go
+RUN go build -ldflags="-s -w" -o main ./cmd/main.go
 
-# run port http server
+# Stage 2: Clean final image
+FROM alpine:latest
+
+# Install bash kalau tetap pakai CMD shell
+RUN apk add --no-cache bash
+
+WORKDIR /app
+
+# Copy hanya hasil build
+COPY --from=builder /app/migrate .
+COPY --from=builder /app/main .
+
 EXPOSE 3000
 
-# Jalankan migrate dulu, lalu main
 CMD ["sh", "-c", "./migrate && ./main"]
