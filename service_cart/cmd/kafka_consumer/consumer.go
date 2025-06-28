@@ -10,9 +10,10 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/kafka-go"
+	"github.com/sony/gobreaker"
 )
 
-func ValidationResponseConsumer(redis *redis.Client, usecase usecase.CartUsecase) {
+func ValidationResponseConsumer(redis *redis.Client, usecase usecase.CartUsecase, breaker *gobreaker.CircuitBreaker) {
 	r := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: []string{os.Getenv("KAFKA_BROKER")},
 		Topic:   "product-validation-response",
@@ -38,18 +39,25 @@ func ValidationResponseConsumer(redis *redis.Client, usecase usecase.CartUsecase
 			stock := payload["stock"].(int)
 			productId := payload["product_id"].(uint)
 
-			if deleted {
-				usecase.UpdateIsDeleteProduct(productId)
-			}
+			if _, errBreaker := breaker.Execute(func() (interface{}, error) {
+				if deleted {
+					return nil, usecase.UpdateIsDeleteProduct(productId)
+				}
 
-			data := map[string]interface{}{
-				"deleted": deleted,
-				"stock":   stock,
-			}
-			jsonData, _ := json.Marshal(data)
+				data := map[string]interface{}{
+					"deleted": deleted,
+					"stock":   stock,
+				}
+				jsonData, _ := json.Marshal(data)
 
-			key := fmt.Sprintf("response:%s", corrID)
-			redis.Set(context.Background(), key, jsonData, 10*time.Second)
+				key := fmt.Sprintf("response:%s", corrID)
+
+				return redis.Set(context.Background(), key, jsonData, 10*time.Second).Result()
+
+			}); errBreaker != nil {
+				fmt.Println("update produt failed or redis failed or breaker open:", err)
+				continue
+			}
 
 		}
 	}()

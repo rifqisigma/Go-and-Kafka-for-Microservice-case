@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log"
 	"service_user/dto"
 	"service_user/helper/utils"
 	"service_user/internal/repository"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/segmentio/kafka-go"
+	"github.com/sony/gobreaker"
 )
 
 type AuthUsecase interface {
@@ -18,12 +22,49 @@ type AuthUsecase interface {
 }
 
 type authUsecase struct {
-	authRepo repository.AuthRepo
-	kafka    map[string]*kafka.Writer
+	authRepo     repository.AuthRepo
+	kafka        map[string]*kafka.Writer
+	writeBreaker *gobreaker.CircuitBreaker
 }
 
 func NewAuthUsecase(authRepo repository.AuthRepo, kafka map[string]*kafka.Writer) AuthUsecase {
-	return &authUsecase{authRepo, kafka}
+	cb := gobreaker.NewCircuitBreaker(gobreaker.Settings{
+		Name:        "ProducerBreaker",
+		MaxRequests: 5,
+		Interval:    30 * time.Second,
+		Timeout:     5 * time.Second,
+		OnStateChange: func(name string, from, to gobreaker.State) {
+			log.Printf("[Circuit Breaker: %s] status berubah dari %s ➜ %s\n", name, from.String(), to.String())
+		},
+	})
+	return &authUsecase{authRepo, kafka, cb}
+}
+
+func (u *authUsecase) WriteKafkaMessage(topic string, key string, payload interface{}) error {
+	writer, ok := u.kafka[topic]
+	if !ok {
+		return utils.ErrNoTopic
+	}
+
+	value, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	msg := kafka.Message{
+		Key:   []byte(key),
+		Value: value,
+	}
+
+	_, err = u.writeBreaker.Execute(func() (interface{}, error) {
+		return nil, writer.WriteMessages(context.Background(), msg)
+	})
+
+	if err != nil {
+		return fmt.Errorf("kafka write failed or circuit open: %w", err)
+	}
+
+	return nil
 }
 
 func (u *authUsecase) Register(req *dto.RegisterReq) error {
@@ -42,10 +83,6 @@ func (u *authUsecase) Register(req *dto.RegisterReq) error {
 	}
 
 	corrId := uuid.NewString()
-	writer, ok := u.kafka["notification-request"]
-	if !ok {
-		return utils.ErrInvalidWriter
-	}
 
 	data := map[string]interface{}{
 		"correlation_id": corrId,
@@ -54,13 +91,11 @@ func (u *authUsecase) Register(req *dto.RegisterReq) error {
 		"action":         "register",
 		"message":        req.Email,
 	}
-
-	value, _ := json.Marshal(data)
-	msg := kafka.Message{
-		Key:   []byte(corrId),
-		Value: value,
+	if err := u.WriteKafkaMessage("notification-request", corrId, data); err != nil {
+		return err
 	}
-	return writer.WriteMessages(context.Background(), msg)
+	return nil
+
 }
 
 func (u *authUsecase) Login(req *dto.LoginReq) (string, error) {

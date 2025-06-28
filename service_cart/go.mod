@@ -9,6 +9,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/redis/go-redis/v9 v9.9.0
 	github.com/segmentio/kafka-go v0.4.48
+	github.com/sony/gobreaker v1.0.0
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/gorm v1.30.0
 )

@@ -11,9 +11,10 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/kafka-go"
+	"github.com/sony/gobreaker"
 )
 
-func ProductRequestConsumer(usecase usecase.ProductUsecase) {
+func ProductRequestConsumer(usecase usecase.ProductUsecase, breaker *gobreaker.CircuitBreaker) {
 	r := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: []string{os.Getenv("KAFKA_BROKER")},
 		Topic:   "products-request",
@@ -36,16 +37,22 @@ func ProductRequestConsumer(usecase usecase.ProductUsecase) {
 
 			storeID := uint(payload["store_id"].(float64))
 			corrID := payload["correlation_id"].(string)
-
-			if err := usecase.SendProductsResponse(storeID, corrID); err != nil {
-				fmt.Printf("why error write : %v", err)
+			_, errBreaker := breaker.Execute(func() (interface{}, error) {
+				if err := usecase.SendProductsResponse(storeID, corrID); err != nil {
+					fmt.Printf("why error write : %v", err)
+					return nil, err
+				}
+				return nil, nil
+			})
+			if errBreaker != nil {
+				fmt.Printf("write response failed or breaker open:%v", errBreaker)
+				continue
 			}
-
 		}
 	}()
 }
 
-func ValidationStoreConsumer(redis *redis.Client) {
+func ValidationStoreConsumer(redis *redis.Client, breaker *gobreaker.CircuitBreaker) {
 	r := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: []string{os.Getenv("KAFKA_BROKER")},
 		Topic:   "validation-store-response",
@@ -69,13 +76,20 @@ func ValidationStoreConsumer(redis *redis.Client) {
 			isValid := payload["is_valid"].(bool)
 
 			key := fmt.Sprintf("response:%s", corrID)
-			redis.Set(context.Background(), key, isValid, 10*time.Second)
+			_, errBreaker := breaker.Execute(func() (interface{}, error) {
+				return redis.Set(context.Background(), key, isValid, 10*time.Second).Result()
+			})
+
+			if errBreaker != nil {
+				fmt.Printf("redis err or breaker open:%v", errBreaker)
+				continue
+			}
 
 		}
 	}()
 }
 
-func ValidationProductConsumer(usecase usecase.ProductUsecase) {
+func ValidationProductConsumer(usecase usecase.ProductUsecase, breaker *gobreaker.CircuitBreaker) {
 	r := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: []string{"localhost:9002"},
 		Topic:   "product-validation-request",
@@ -99,9 +113,16 @@ func ValidationProductConsumer(usecase usecase.ProductUsecase) {
 			corrID := payload["correlation_id"].(string)
 			productId := payload["product_id"].(uint)
 
-			if err := usecase.SendValidationCartResponse(productId, corrID); err != nil {
-				fmt.Printf("why error write : %s", err)
+			if _, errBreaker := breaker.Execute(func() (interface{}, error) {
+				if err := usecase.SendValidationCartResponse(productId, corrID); err != nil {
+					return nil, err
+				}
+				return nil, nil
+			}); errBreaker != nil {
+				fmt.Printf("write response failed or breaker open:%v", errBreaker)
+				continue
 			}
+
 		}
 	}()
 }

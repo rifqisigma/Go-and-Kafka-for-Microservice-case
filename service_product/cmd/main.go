@@ -11,8 +11,10 @@ import (
 	"service_product/internal/handler"
 	"service_product/internal/repository"
 	"service_product/internal/usecase"
+	"time"
 
 	"github.com/segmentio/kafka-go"
+	"github.com/sony/gobreaker"
 )
 
 func main() {
@@ -52,9 +54,18 @@ func main() {
 		port = "3002"
 	}
 
-	go kafkaconsumer.ProductRequestConsumer(productUC)
-	go kafkaconsumer.ValidationStoreConsumer(rdb)
-	go kafkaconsumer.ProductRequestConsumer(productUC)
+	cb := gobreaker.NewCircuitBreaker(gobreaker.Settings{
+		Name:        "consumerBreaker",
+		Interval:    30 * time.Second,
+		MaxRequests: 5,
+		Timeout:     5 * time.Second,
+		OnStateChange: func(name string, from, to gobreaker.State) {
+			log.Printf("[Circuit Breaker: %s] status berubah dari %s ➜ %s\n", name, from.String(), to.String())
+		},
+	})
+	go kafkaconsumer.ProductRequestConsumer(productUC, cb)
+	go kafkaconsumer.ValidationStoreConsumer(rdb, cb)
+	go kafkaconsumer.ProductRequestConsumer(productUC, cb)
 
 	fmt.Printf("service product berjalan pada port:%s", port)
 	http.ListenAndServe(":"+port, r)

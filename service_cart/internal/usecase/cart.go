@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"service_cart/dto"
 	"service_cart/helper/utils"
 	"service_cart/internal/repository"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/segmentio/kafka-go"
+	"github.com/sony/gobreaker"
 )
 
 type CartUsecase interface {
@@ -18,20 +21,56 @@ type CartUsecase interface {
 	UpdateAmountCartItem(req *dto.UpdateAmountCartItemReq) error
 	UpdatePaidCartItem(req *dto.UpdatePaidCartItemReq) error
 	DeleteCartItem(userId, id uint) error
+	UpdateIsDeleteProduct(id uint) error
 
 	//kafka
-	CreateValidationWrite(correlationID string, productId uint) error
-	UpdateIsDeleteProduct(id uint) error
-	SendNotifRequest(correlationID, email string, message interface{}, service, action string) error
+	WriteKafkaMessage(topic string, key string, payload interface{}) error
 }
 
 type cartUsecase struct {
-	cartRepo repository.CartRepo
-	kafka    map[string]*kafka.Writer
+	cartRepo     repository.CartRepo
+	kafka        map[string]*kafka.Writer
+	writeBreaker *gobreaker.CircuitBreaker
 }
 
 func NewCartUsecase(cartRepo repository.CartRepo, kafka map[string]*kafka.Writer) CartUsecase {
-	return &cartUsecase{cartRepo, kafka}
+	cb := gobreaker.NewCircuitBreaker(gobreaker.Settings{
+		Name:        "ProducerBreaker",
+		MaxRequests: 5,
+		Interval:    30 * time.Second,
+		Timeout:     5 * time.Second,
+		OnStateChange: func(name string, from, to gobreaker.State) {
+			log.Printf("[Circuit Breaker: %s] status berubah dari %s ➜ %s\n", name, from.String(), to.String())
+		},
+	})
+	return &cartUsecase{cartRepo, kafka, cb}
+}
+
+func (u *cartUsecase) WriteKafkaMessage(topic string, key string, payload interface{}) error {
+	writer, ok := u.kafka[topic]
+	if !ok {
+		return utils.ErrNoTopic
+	}
+
+	value, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	msg := kafka.Message{
+		Key:   []byte(key),
+		Value: value,
+	}
+
+	_, err = u.writeBreaker.Execute(func() (interface{}, error) {
+		return nil, writer.WriteMessages(context.Background(), msg)
+	})
+
+	if err != nil {
+		return fmt.Errorf("kafka write failed or circuit open: %w", err)
+	}
+
+	return nil
 }
 
 func (u *cartUsecase) GetMyCartItems(userId uint) ([]dto.CartItem, error) {
@@ -40,7 +79,12 @@ func (u *cartUsecase) GetMyCartItems(userId uint) ([]dto.CartItem, error) {
 
 func (u *cartUsecase) CreateCartItem(req *dto.CreateCartItemReq) error {
 	corrId := uuid.NewString()
-	if err := u.CreateValidationWrite(corrId, req.ProductID); err != nil {
+
+	payload := map[string]interface{}{
+		"correlation_id": corrId,
+		"product_id":     req.ProductID,
+	}
+	if err := u.WriteKafkaMessage("validation-product-request", corrId, payload); err != nil {
 		return utils.ErrFailedKafkaWrite
 	}
 
@@ -61,7 +105,12 @@ func (u *cartUsecase) CreateCartItem(req *dto.CreateCartItemReq) error {
 
 func (u *cartUsecase) UpdateAmountCartItem(req *dto.UpdateAmountCartItemReq) error {
 	corrId := uuid.NewString()
-	if err := u.CreateValidationWrite(corrId, req.ProductID); err != nil {
+
+	payload := map[string]interface{}{
+		"correlation_id": corrId,
+		"product_id":     req.ProductID,
+	}
+	if err := u.WriteKafkaMessage("validation-product-request", corrId, payload); err != nil {
 		return utils.ErrFailedKafkaWrite
 	}
 
@@ -82,7 +131,12 @@ func (u *cartUsecase) UpdateAmountCartItem(req *dto.UpdateAmountCartItemReq) err
 
 func (u *cartUsecase) UpdatePaidCartItem(req *dto.UpdatePaidCartItemReq) error {
 	corrId := uuid.NewString()
-	if err := u.CreateValidationWrite(corrId, req.ProductID); err != nil {
+
+	payload := map[string]interface{}{
+		"correlation_id": corrId,
+		"product_id":     req.ProductID,
+	}
+	if err := u.WriteKafkaMessage("validation-product-request", corrId, payload); err != nil {
 		return utils.ErrFailedKafkaWrite
 	}
 
@@ -100,8 +154,16 @@ func (u *cartUsecase) UpdatePaidCartItem(req *dto.UpdatePaidCartItemReq) error {
 	}
 
 	message, _ := json.Marshal(&req)
-	if err := u.SendNotifRequest(corrId, req.Email, message, "cart", "paid"); err != nil {
-		return err
+	payloadtwo := map[string]interface{}{
+		"correlation_id": corrId,
+		"email":          req.Email,
+		"service":        "cart",
+		"action":         "paid",
+		"message":        message,
+	}
+
+	if err := u.WriteKafkaMessage("notification-request", corrId, payloadtwo); err != nil {
+		return utils.ErrFailedKafkaWrite
 	}
 	return u.cartRepo.UpdatePaidCartItem(req)
 }
@@ -110,49 +172,6 @@ func (u *cartUsecase) DeleteCartItem(userId, id uint) error {
 	return u.cartRepo.DeleteCartItem(userId, id)
 }
 
-func (u *cartUsecase) CreateValidationWrite(correlationID string, productId uint) error {
-	writer, ok := u.kafka["validation-product-request"]
-	if !ok {
-		return fmt.Errorf("writer for topic  not found")
-	}
-
-	payload := map[string]interface{}{
-		"correlation_id": correlationID,
-		"product_id":     productId,
-	}
-
-	value, _ := json.Marshal(payload)
-	msg := kafka.Message{
-		Key:   []byte(correlationID),
-		Value: value,
-	}
-
-	return writer.WriteMessages(context.Background(), msg)
-}
-
 func (u *cartUsecase) UpdateIsDeleteProduct(id uint) error {
 	return u.cartRepo.UpdateIsDeleteProduct(id)
-}
-
-func (u *cartUsecase) SendNotifRequest(correlationID, email string, message interface{}, service, action string) error {
-	writer, ok := u.kafka["notification-request"]
-	if !ok {
-		return utils.ErrFailedKafkaWrite
-	}
-
-	data := map[string]interface{}{
-		"correlation_id": correlationID,
-		"email":          email,
-		"service":        service,
-		"action":         action,
-		"message":        message,
-	}
-
-	value, _ := json.Marshal(data)
-	msg := kafka.Message{
-		Key:   []byte(correlationID),
-		Value: value,
-	}
-
-	return writer.WriteMessages(context.Background(), msg)
 }

@@ -11,8 +11,10 @@ import (
 	"service_cart/internal/handler"
 	"service_cart/internal/repository"
 	"service_cart/internal/usecase"
+	"time"
 
 	"github.com/segmentio/kafka-go"
+	"github.com/sony/gobreaker"
 )
 
 func main() {
@@ -34,8 +36,16 @@ func main() {
 	cartHandler := handler.NewCartpHandler(cartUC)
 
 	r := route.SetupRoute(cartHandler)
-
-	go kafkaconsumer.ValidationResponseConsumer(rdb, cartUC)
+	cb := gobreaker.NewCircuitBreaker(gobreaker.Settings{
+		Name:        "ConsumerBreaker",
+		MaxRequests: 3,
+		Interval:    20 * time.Second,
+		Timeout:     5 * time.Second,
+		OnStateChange: func(name string, from, to gobreaker.State) {
+			log.Printf("[Circuit Breaker: %s] status berubah dari %s ➜ %s\n", name, from.String(), to.String())
+		},
+	})
+	go kafkaconsumer.ValidationResponseConsumer(rdb, cartUC, cb)
 
 	port := os.Getenv("PORT")
 	if port == "" {

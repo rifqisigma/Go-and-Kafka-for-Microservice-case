@@ -10,9 +10,10 @@ import (
 	"time"
 
 	"github.com/segmentio/kafka-go"
+	"github.com/sony/gobreaker"
 )
 
-func ProductResponseConsumer() {
+func ProductResponseConsumer(breaker *gobreaker.CircuitBreaker) {
 	r := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: []string{os.Getenv("KAFKA_BROKER")},
 		Topic:   "notification-request",
@@ -39,116 +40,124 @@ func ProductResponseConsumer() {
 			email := payload["email"].(string)
 			message := payload["message"]
 
-			fmt.Println(message)
+			_, errBreaker := breaker.Execute(func() (interface{}, error) {
+				if service == "user" {
+					if action == "register" {
+						html := fmt.Sprintf("<h1>ActionId:%s <br> Hello %s selamat datang di shop!</h1>", corrID, message.(string))
+						send := dto.SendEmail{
+							ToEmail:  email,
+							Header:   service,
+							ActionId: corrID,
+							Desc:     html,
+						}
+						return nil, utils.SendEmail(&send)
+					}
+				} else if service == "store" {
+					if action == "create" {
+						var store dto.Store
+						err := json.Unmarshal([]byte(message.(string)), &store)
+						if err != nil {
+							fmt.Println(err)
+						}
+						html := fmt.Sprintf("<h1>ActionId:%s <br>anda berhasil membuat store <br> id:%d <br> name:%s <br> admin created:%d <br>created by :%s</h1>", corrID, store.ID, store.Name, store.AdminID, store.CreatedAt.Format(time.RFC1123))
+						send := dto.SendEmail{
+							ToEmail:  email,
+							Header:   service,
+							ActionId: corrID,
+							Desc:     html,
+						}
+						return nil, utils.SendEmail(&send)
 
-			if service == "user" {
-				if action == "register" {
-					html := fmt.Sprintf("<h1>ActionId:%s <br> Hello %s selamat datang di shop!</h1>", corrID, message.(string))
-					send := dto.SendEmail{
-						ToEmail:  email,
-						Header:   service,
-						ActionId: corrID,
-						Desc:     html,
+					} else if action == "update" {
+						var store dto.Store
+						err := json.Unmarshal([]byte(message.(string)), &store)
+						if err != nil {
+							fmt.Println(err)
+						}
+						html := fmt.Sprintf("<h1>ActionId:%s <br>anda berhasil mengupdate store <br> id:%d <br> name:%s </h1>", corrID, store.ID, store.Name)
+						send := dto.SendEmail{
+							ToEmail:  email,
+							Header:   service,
+							ActionId: corrID,
+							Desc:     html,
+						}
+						return nil, utils.SendEmail(&send)
+					} else if action == "delete" {
+						html := fmt.Sprintf("<h1>ActionId:%s <br>anda berhasil menghapus store dengan id %v </h1>", corrID, message.(uint))
+						send := dto.SendEmail{
+							ToEmail:  email,
+							Header:   service,
+							ActionId: corrID,
+							Desc:     html,
+						}
+						return nil, utils.SendEmail(&send)
 					}
-					utils.SendEmail(&send)
-				}
-			} else if service == "store" {
-				if action == "create" {
-					var store dto.Store
-					err := json.Unmarshal([]byte(message.(string)), &store)
-					if err != nil {
-						fmt.Println(err)
-					}
-					html := fmt.Sprintf("<h1>ActionId:%s <br>anda berhasil membuat store <br> id:%d <br> name:%s <br> admin created:%d <br>created by :%s</h1>", corrID, store.ID, store.Name, store.AdminID, store.CreatedAt.Format(time.RFC1123))
-					send := dto.SendEmail{
-						ToEmail:  email,
-						Header:   service,
-						ActionId: corrID,
-						Desc:     html,
-					}
-					utils.SendEmail(&send)
+				} else if service == "product" {
+					if action == "create" {
+						var product dto.Product
+						err := json.Unmarshal([]byte(message.(string)), &product)
+						if err != nil {
+							fmt.Println(err)
+						}
+						html := fmt.Sprintf("<h1>ActionId:%s <br>anda berhasil menambahkan product <br> id:%d <br> name:%s <br> stock:%d <br>created by :%s</h1>", corrID, product.ID, product.Name, product.Stock, product.CreatedAt.Format(time.RFC1123))
+						send := dto.SendEmail{
+							ToEmail:  email,
+							Header:   service,
+							ActionId: corrID,
+							Desc:     html,
+						}
+						return nil, utils.SendEmail(&send)
 
-				} else if action == "update" {
-					var store dto.Store
-					err := json.Unmarshal([]byte(message.(string)), &store)
-					if err != nil {
-						fmt.Println(err)
+					} else if action == "update" {
+						var product dto.Product
+						err := json.Unmarshal([]byte(message.(string)), &product)
+						if err != nil {
+							fmt.Println(err)
+						}
+						html := fmt.Sprintf("<h1>ActionId:%s <br>anda berhasil mengupdate product <br> id:%d <br> name:%s <br> stock:%d</h1>", corrID, product.ID, product.Name, product.Stock)
+						send := dto.SendEmail{
+							ToEmail:  email,
+							Header:   service,
+							ActionId: corrID,
+							Desc:     html,
+						}
+						return nil, utils.SendEmail(&send)
+					} else if action == "delete" {
+						html := fmt.Sprintf("<h1>ActionId:%s <br>anda berhasil menghapus product dengan id %v </h1>", corrID, message.(uint))
+						send := dto.SendEmail{
+							ToEmail:  email,
+							Header:   service,
+							ActionId: corrID,
+							Desc:     html,
+						}
+						return nil, utils.SendEmail(&send)
 					}
-					html := fmt.Sprintf("<h1>ActionId:%s <br>anda berhasil mengupdate store <br> id:%d <br> name:%s </h1>", corrID, store.ID, store.Name)
-					send := dto.SendEmail{
-						ToEmail:  email,
-						Header:   service,
-						ActionId: corrID,
-						Desc:     html,
+				} else if service == "cart" {
+					if action == "paid" {
+						var paid dto.UpdatePaidCartItemReq
+						err := json.Unmarshal([]byte(message.(string)), &paid)
+						if err != nil {
+							fmt.Println(err)
+						}
+						html := fmt.Sprintf("<h1>ActionId:%s <br>anda berhasil membeli product <br> cart id:%d <br> product_id:%d <br> total:%d <br>buy date :%s</h1>", corrID, paid.ID, paid.ProductID, paid.PurchaseAmount, time.Now().Format(time.RFC1123))
+						send := dto.SendEmail{
+							ToEmail:  email,
+							Header:   service,
+							ActionId: corrID,
+							Desc:     html,
+						}
+						return nil, utils.SendEmail(&send)
 					}
-					utils.SendEmail(&send)
-				} else if action == "delete" {
-					html := fmt.Sprintf("<h1>ActionId:%s <br>anda berhasil menghapus store dengan id %v </h1>", corrID, message.(uint))
-					send := dto.SendEmail{
-						ToEmail:  email,
-						Header:   service,
-						ActionId: corrID,
-						Desc:     html,
-					}
-					utils.SendEmail(&send)
 				}
-			} else if service == "product" {
-				if action == "create" {
-					var product dto.Product
-					err := json.Unmarshal([]byte(message.(string)), &product)
-					if err != nil {
-						fmt.Println(err)
-					}
-					html := fmt.Sprintf("<h1>ActionId:%s <br>anda berhasil menambahkan product <br> id:%d <br> name:%s <br> stock:%d <br>created by :%s</h1>", corrID, product.ID, product.Name, product.Stock, product.CreatedAt.Format(time.RFC1123))
-					send := dto.SendEmail{
-						ToEmail:  email,
-						Header:   service,
-						ActionId: corrID,
-						Desc:     html,
-					}
-					utils.SendEmail(&send)
 
-				} else if action == "update" {
-					var product dto.Product
-					err := json.Unmarshal([]byte(message.(string)), &product)
-					if err != nil {
-						fmt.Println(err)
-					}
-					html := fmt.Sprintf("<h1>ActionId:%s <br>anda berhasil mengupdate product <br> id:%d <br> name:%s <br> stock:%d</h1>", corrID, product.ID, product.Name, product.Stock)
-					send := dto.SendEmail{
-						ToEmail:  email,
-						Header:   service,
-						ActionId: corrID,
-						Desc:     html,
-					}
-					utils.SendEmail(&send)
-				} else if action == "delete" {
-					html := fmt.Sprintf("<h1>ActionId:%s <br>anda berhasil menghapus product dengan id %v </h1>", corrID, message.(uint))
-					send := dto.SendEmail{
-						ToEmail:  email,
-						Header:   service,
-						ActionId: corrID,
-						Desc:     html,
-					}
-					utils.SendEmail(&send)
-				}
-			} else if service == "cart" {
-				if action == "paid" {
-					var paid dto.UpdatePaidCartItemReq
-					err := json.Unmarshal([]byte(message.(string)), &paid)
-					if err != nil {
-						fmt.Println(err)
-					}
-					html := fmt.Sprintf("<h1>ActionId:%s <br>anda berhasil membeli product <br> cart id:%d <br> product_id:%d <br> total:%d <br>buy date :%s</h1>", corrID, paid.ID, paid.ProductID, paid.PurchaseAmount, time.Now().Format(time.RFC1123))
-					send := dto.SendEmail{
-						ToEmail:  email,
-						Header:   service,
-						ActionId: corrID,
-						Desc:     html,
-					}
-					utils.SendEmail(&send)
-				}
+				return nil, nil
+			})
+
+			if errBreaker != nil {
+				fmt.Printf("write response failed or breaker open:%v", errBreaker)
+				continue
 			}
+
 		}
 	}()
 }

@@ -7,4 +7,5 @@ var (
 	ErrInvalidEmail      = errors.New("email tidak sesuai")
 	ErrInvalidWriter     = errors.New("writer salah")
 	ErrFailedKafkaWriter = errors.New("gagal writer kafka")
+	ErrNoTopic           = errors.New("bukan ada topic ini")
 )

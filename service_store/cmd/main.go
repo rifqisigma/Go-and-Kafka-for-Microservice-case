@@ -7,12 +7,14 @@ import (
 	"service_store/cmd/database"
 	kafkaconsumer "service_store/cmd/kafka_consumer"
 	"service_store/cmd/route"
+	"time"
 
 	"service_store/internal/handler"
 	"service_store/internal/repository"
 	"service_store/internal/usecase"
 
 	kafka "github.com/segmentio/kafka-go"
+	"github.com/sony/gobreaker"
 )
 
 func main() {
@@ -35,11 +37,21 @@ func main() {
 		}),
 	}
 
-	go kafkaconsumer.ProductResponseConsumer(rdb)
-
 	storeRepo := repository.NewStoreRepo(db, rdb)
 	storeUC := usecase.NewStoreUsecase(storeRepo, kafkaWriter)
 	storeHandler := handler.NewStoreHandler(storeUC)
+
+	breaker := gobreaker.NewCircuitBreaker(gobreaker.Settings{
+		Name:        "ConsumerBreaker",
+		MaxRequests: 3,
+		Interval:    20 * time.Second,
+		Timeout:     5 * time.Second,
+		OnStateChange: func(name string, from, to gobreaker.State) {
+			log.Printf("[Circuit Breaker: %s] status berubah dari %s ➜ %s\n", name, from.String(), to.String())
+		},
+	})
+	go kafkaconsumer.ProductResponseConsumer(rdb, breaker)
+	go kafkaconsumer.ValidationRequestConsumer(storeUC, breaker)
 
 	r := route.SetupRoute(storeHandler)
 

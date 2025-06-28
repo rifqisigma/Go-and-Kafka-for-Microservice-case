@@ -8,6 +8,7 @@ require (
 	github.com/gorilla/mux v1.8.1
 	github.com/joho/godotenv v1.5.1
 	github.com/segmentio/kafka-go v0.4.48
+	github.com/sony/gobreaker v1.0.0
 	golang.org/x/crypto v0.38.0
 	gorm.io/driver/mysql v1.5.7
 	gorm.io/gorm v1.30.0

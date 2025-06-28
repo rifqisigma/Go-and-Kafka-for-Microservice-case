@@ -8,7 +8,7 @@ import (
 	"gopkg.in/gomail.v2"
 )
 
-func SendEmail(input *dto.SendEmail) {
+func SendEmail(input *dto.SendEmail) error {
 	mailer := gomail.NewMessage()
 	mailer.SetHeader("From", os.Getenv("EMAIL_SENDER"))
 	mailer.SetHeader("To", input.ToEmail)
@@ -18,7 +18,5 @@ func SendEmail(input *dto.SendEmail) {
 	mailer.SetBody("text/html", input.Desc)
 	dialer := gomail.NewDialer("smtp.gmail.com", 587, os.Getenv("EMAIL_SENDER"), os.Getenv("APP_PASSWORD"))
 
-	if err := dialer.DialAndSend(mailer); err != nil {
-		fmt.Println("Error sending email:", err)
-	}
+	return dialer.DialAndSend(mailer)
 }
